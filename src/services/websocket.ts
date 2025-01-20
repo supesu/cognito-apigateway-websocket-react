@@ -50,7 +50,7 @@ class WebSocketService {
     lastFailureTime: 0,
     memoryUsage: 0,
   };
-
+  private lastPingTime: number = Date.now();
   private memoryUsageBreakdown = {
     messages: 0,
     listeners: 0,
@@ -508,10 +508,23 @@ class WebSocketService {
     }, this.HEALTH_CHECK_INTERVAL);
   }
 
-  private performHealthCheck() {
-    const timeSinceLastPong = Date.now() - this.lastPongTime;
 
-    if (timeSinceLastPong > this.HEALTH_CHECK_TIMEOUT) {
+  private performHealthCheck() {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+
+    const timeSinceLastPong = Date.now() - this.lastPongTime;
+    const timeSinceLastPing = Date.now() - this.lastPingTime; // Add this line
+
+    // Only send a new ping if enough time has passed since the last one
+    if (timeSinceLastPing >= this.HEALTH_CHECK_INTERVAL) {
+      this.log("Sending ping...");
+      this.send({ action: "ping" });
+      this.lastPingTime = Date.now(); // Add this line
+      return;
+    }
+
+    // Check for missed pongs only if we've waited long enough after sending a ping
+    if (timeSinceLastPing >= this.HEALTH_CHECK_TIMEOUT && timeSinceLastPong > this.HEALTH_CHECK_TIMEOUT) {
       this.missedPings++;
       this.log(
         `Missed ping response. Strike ${this.missedPings}/${this.MAX_MISSED_PINGS}`,
@@ -521,13 +534,7 @@ class WebSocketService {
       if (this.missedPings >= this.MAX_MISSED_PINGS) {
         this.log("Connection degraded, initiating reconnect...", "error");
         this.reconnect();
-        return;
       }
-    }
-
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.log("Sending ping...");
-      this.send({ action: "ping" });
     }
   }
 
